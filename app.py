@@ -11,7 +11,7 @@ import json
 import asyncio
 import logging
 import traceback
-import httpx
+from curl_cffi import requests as cffi_requests
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
@@ -57,158 +57,165 @@ def get_x_cookies():
     return cookies
 
 
-async def fetch_x_user_id(handle):
-    """Get user ID from screen name using X's v1.1 REST API."""
+def fetch_x_user_id(handle):
+    """Get user ID from screen name using X's v1.1 REST API with Chrome TLS impersonation."""
     handle = handle.lstrip('@')
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(
-            "https://x.com/i/api/1.1/users/show.json",
-            params={'screen_name': handle},
-            headers=get_x_headers(),
-            cookies=get_x_cookies(),
-        )
-        logger.info(f"users/show status: {resp.status_code}")
+    cookie_str = "; ".join(f"{k}={v}" for k, v in get_x_cookies().items() if v)
+    headers = get_x_headers()
+    headers['cookie'] = cookie_str
 
-        if resp.status_code != 200:
-            logger.error(f"users/show error (status {resp.status_code}): {resp.text[:1000]}")
-            raise Exception(f'User @{handle} not found (status {resp.status_code})')
+    resp = cffi_requests.get(
+        "https://x.com/i/api/1.1/users/show.json",
+        params={'screen_name': handle},
+        headers=headers,
+        impersonate="chrome",
+        timeout=30,
+    )
+    logger.info(f"users/show status: {resp.status_code}")
 
-        data = resp.json()
-        rest_id = str(data.get('id', ''))
-        name = data.get('name', handle)
-        friends_count = data.get('friends_count', 0)
+    if resp.status_code != 200:
+        logger.error(f"users/show error (status {resp.status_code}): {resp.text[:1000]}")
+        raise Exception(f'User @{handle} not found (status {resp.status_code})')
 
-        if not rest_id:
-            raise Exception(f'User @{handle} not found')
+    data = resp.json()
+    rest_id = str(data.get('id', ''))
+    name = data.get('name', handle)
+    friends_count = data.get('friends_count', 0)
 
-        logger.info(f"Found user @{handle} (id={rest_id}, following={friends_count})")
-        return rest_id, name, friends_count
+    if not rest_id:
+        raise Exception(f'User @{handle} not found')
+
+    logger.info(f"Found user @{handle} (id={rest_id}, following={friends_count})")
+    return rest_id, name, friends_count
 
 
-async def fetch_x_following(handle):
-    """Fetch following list using X's GraphQL API directly."""
-    user_id, name, friends_count = await fetch_x_user_id(handle)
+def fetch_x_following(handle):
+    """Fetch following list using X's GraphQL API with Chrome TLS impersonation."""
+    user_id, name, friends_count = fetch_x_user_id(handle)
 
     following = []
     cursor = None
+    cookie_str = "; ".join(f"{k}={v}" for k, v in get_x_cookies().items() if v)
+    headers = get_x_headers()
+    headers['cookie'] = cookie_str
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        for page in range(50):  # max 5000 follows
-            variables = {
-                "userId": user_id,
-                "count": 20,
-                "includePromotedContent": False,
-                "withGrokTranslatedBio": False,
-            }
-            if cursor:
-                variables["cursor"] = cursor
+    for page in range(50):  # max 5000 follows
+        variables = {
+            "userId": user_id,
+            "count": 20,
+            "includePromotedContent": False,
+            "withGrokTranslatedBio": False,
+        }
+        if cursor:
+            variables["cursor"] = cursor
 
-            features = {
-                "rweb_video_screen_enabled": False,
-                "profile_label_improvements_pcf_label_in_post_enabled": True,
-                "responsive_web_profile_redirect_enabled": False,
-                "rweb_tipjar_consumption_enabled": False,
-                "verified_phone_label_enabled": False,
-                "creator_subscriptions_tweet_preview_api_enabled": True,
-                "responsive_web_graphql_timeline_navigation_enabled": True,
-                "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
-                "premium_content_api_read_enabled": False,
-                "communities_web_enable_tweet_community_results_fetch": True,
-                "c9s_tweet_anatomy_moderator_badge_enabled": True,
-                "responsive_web_grok_analyze_button_fetch_trends_enabled": False,
-                "responsive_web_grok_analyze_post_followups_enabled": True,
-                "responsive_web_jetfuel_frame": True,
-                "responsive_web_grok_share_attachment_enabled": True,
-                "responsive_web_grok_annotations_enabled": True,
-                "articles_preview_enabled": True,
-                "responsive_web_edit_tweet_api_enabled": True,
-                "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
-                "view_counts_everywhere_api_enabled": True,
-                "longform_notetweets_consumption_enabled": True,
-                "responsive_web_twitter_article_tweet_consumption_enabled": True,
-                "content_disclosure_indicator_enabled": True,
-                "content_disclosure_ai_generated_indicator_enabled": True,
-                "responsive_web_grok_show_grok_translated_post": True,
-                "responsive_web_grok_analysis_button_from_backend": True,
-                "post_ctas_fetch_enabled": True,
-                "freedom_of_speech_not_reach_fetch_enabled": True,
-                "standardized_nudges_misinfo": True,
-                "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
-                "longform_notetweets_rich_text_read_enabled": True,
-                "longform_notetweets_inline_media_enabled": False,
-                "responsive_web_grok_image_annotation_enabled": True,
-                "responsive_web_grok_imagine_annotation_enabled": True,
-                "responsive_web_grok_community_note_auto_translation_is_enabled": False,
-                "responsive_web_enhance_cards_enabled": False,
-            }
+        features = {
+            "rweb_video_screen_enabled": False,
+            "profile_label_improvements_pcf_label_in_post_enabled": True,
+            "responsive_web_profile_redirect_enabled": False,
+            "rweb_tipjar_consumption_enabled": False,
+            "verified_phone_label_enabled": False,
+            "creator_subscriptions_tweet_preview_api_enabled": True,
+            "responsive_web_graphql_timeline_navigation_enabled": True,
+            "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+            "premium_content_api_read_enabled": False,
+            "communities_web_enable_tweet_community_results_fetch": True,
+            "c9s_tweet_anatomy_moderator_badge_enabled": True,
+            "responsive_web_grok_analyze_button_fetch_trends_enabled": False,
+            "responsive_web_grok_analyze_post_followups_enabled": True,
+            "responsive_web_jetfuel_frame": True,
+            "responsive_web_grok_share_attachment_enabled": True,
+            "responsive_web_grok_annotations_enabled": True,
+            "articles_preview_enabled": True,
+            "responsive_web_edit_tweet_api_enabled": True,
+            "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+            "view_counts_everywhere_api_enabled": True,
+            "longform_notetweets_consumption_enabled": True,
+            "responsive_web_twitter_article_tweet_consumption_enabled": True,
+            "content_disclosure_indicator_enabled": True,
+            "content_disclosure_ai_generated_indicator_enabled": True,
+            "responsive_web_grok_show_grok_translated_post": True,
+            "responsive_web_grok_analysis_button_from_backend": True,
+            "post_ctas_fetch_enabled": True,
+            "freedom_of_speech_not_reach_fetch_enabled": True,
+            "standardized_nudges_misinfo": True,
+            "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+            "longform_notetweets_rich_text_read_enabled": True,
+            "longform_notetweets_inline_media_enabled": False,
+            "responsive_web_grok_image_annotation_enabled": True,
+            "responsive_web_grok_imagine_annotation_enabled": True,
+            "responsive_web_grok_community_note_auto_translation_is_enabled": False,
+            "responsive_web_enhance_cards_enabled": False,
+        }
 
-            resp = await client.get(
-                GRAPHQL_FOLLOWING,
-                params={
-                    'variables': json.dumps(variables),
-                    'features': json.dumps(features),
-                },
-                headers=get_x_headers(),
-                cookies=get_x_cookies(),
-            )
+        resp = cffi_requests.get(
+            GRAPHQL_FOLLOWING,
+            params={
+                'variables': json.dumps(variables),
+                'features': json.dumps(features),
+            },
+            headers=headers,
+            impersonate="chrome",
+            timeout=30,
+        )
 
-            logger.info(f"Following page {page}: status {resp.status_code}")
+        logger.info(f"Following page {page}: status {resp.status_code}")
 
-            if resp.status_code != 200:
-                logger.error(f"Following error: {resp.text[:500]}")
-                break
+        if resp.status_code != 200:
+            logger.error(f"Following error: {resp.text[:500]}")
+            break
 
-            data = resp.json()
+        data = resp.json()
 
-            # Parse the timeline entries
-            instructions = (
-                data.get('data', {})
-                .get('user', {})
-                .get('result', {})
-                .get('timeline', {})
-                .get('timeline', {})
-                .get('instructions', [])
-            )
+        # Parse the timeline entries
+        instructions = (
+            data.get('data', {})
+            .get('user', {})
+            .get('result', {})
+            .get('timeline', {})
+            .get('timeline', {})
+            .get('instructions', [])
+        )
 
-            entries = []
-            next_cursor = None
+        entries = []
+        next_cursor = None
 
-            for instruction in instructions:
-                if instruction.get('type') == 'TimelineAddEntries':
-                    entries = instruction.get('entries', [])
-                elif instruction.get('type') == 'TimelineAddToModule':
-                    entries.extend(instruction.get('moduleItems', []))
+        for instruction in instructions:
+            if instruction.get('type') == 'TimelineAddEntries':
+                entries = instruction.get('entries', [])
+            elif instruction.get('type') == 'TimelineAddToModule':
+                entries.extend(instruction.get('moduleItems', []))
 
-            for entry in entries:
-                entry_id = entry.get('entryId', '')
+        for entry in entries:
+            entry_id = entry.get('entryId', '')
 
-                # Cursor entries
-                if entry_id.startswith('cursor-bottom'):
-                    next_cursor = entry.get('content', {}).get('value')
-                    continue
+            # Cursor entries
+            if entry_id.startswith('cursor-bottom'):
+                next_cursor = entry.get('content', {}).get('value')
+                continue
 
-                # User entries
-                content = entry.get('content', {})
-                item_content = content.get('itemContent', {})
-                user_results = item_content.get('user_results', {}).get('result', {})
+            # User entries
+            content = entry.get('content', {})
+            item_content = content.get('itemContent', {})
+            user_results = item_content.get('user_results', {}).get('result', {})
 
-                if not user_results:
-                    continue
+            if not user_results:
+                continue
 
-                legacy = user_results.get('legacy', {})
-                screen_name = legacy.get('screen_name', '')
-                display_name = legacy.get('name', screen_name)
+            legacy = user_results.get('legacy', {})
+            screen_name = legacy.get('screen_name', '')
+            display_name = legacy.get('name', screen_name)
 
-                if screen_name:
-                    following.append({
-                        'handle': screen_name,
-                        'name': display_name,
-                    })
+            if screen_name:
+                following.append({
+                    'handle': screen_name,
+                    'name': display_name,
+                })
 
-            if not next_cursor or len(entries) <= 2:  # only cursor entries left
-                break
-            cursor = next_cursor
+        if not next_cursor or len(entries) <= 2:  # only cursor entries left
+            break
+        cursor = next_cursor
 
     logger.info(f"Fetched {len(following)} following for @{handle}")
     return following
@@ -286,10 +293,7 @@ def get_following():
 
     try:
         if platform == 'twitter' or platform == 'x':
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            following = loop.run_until_complete(fetch_x_following(handle))
-            loop.close()
+            following = fetch_x_following(handle)
             return jsonify({'following': following, 'count': len(following)})
 
         elif platform == 'instagram':

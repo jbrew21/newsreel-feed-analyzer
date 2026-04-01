@@ -181,6 +181,9 @@ def fetch_x_following(handle):
 
         logger.info(f"Following page {page}: status {resp.status_code}")
 
+        if page == 0:
+            logger.info(f"Following page 0 response (first 2000 chars): {resp.text[:2000]}")
+
         if resp.status_code != 200:
             logger.error(f"Following error: {resp.text[:500]}")
             break

@@ -187,32 +187,6 @@ def fetch_x_following(handle):
 
         data = resp.json()
 
-        if page == 0:
-            # Dump top-level keys and drill down to find entries
-            logger.info(f"Response top keys: {list(data.keys())}")
-            d = data.get('data', {})
-            logger.info(f"data keys: {list(d.keys())}")
-            u = d.get('user', {})
-            logger.info(f"data.user keys: {list(u.keys())}")
-            r = u.get('result', {})
-            logger.info(f"data.user.result keys: {list(r.keys())}")
-            t = r.get('timeline', {})
-            logger.info(f"data.user.result.timeline keys: {list(t.keys())}")
-            t2 = t.get('timeline', {})
-            logger.info(f"data.user.result.timeline.timeline keys: {list(t2.keys())}")
-            raw_instructions = t2.get('instructions', [])
-            logger.info(f"instructions count: {len(raw_instructions)}")
-            for idx, inst in enumerate(raw_instructions):
-                logger.info(f"instruction[{idx}] type={inst.get('type','NO_TYPE')} keys={list(inst.keys())} entries_count={len(inst.get('entries', []))}")
-
-            # Also try alternate path: data.user.result.timeline_v2
-            if 'timeline_v2' in r:
-                logger.info(f"FOUND timeline_v2! keys: {list(r['timeline_v2'].keys())}")
-
-            # Raw dump first 2000 chars if no instructions
-            if not raw_instructions:
-                logger.info(f"RAW RESPONSE (first 2000): {json.dumps(data)[:2000]}")
-
         # Parse the timeline entries
         instructions = (
             data.get('data', {})
@@ -245,7 +219,7 @@ def fetch_x_following(handle):
                 entries.extend(instruction.get('moduleItems', []))
 
         if page == 0:
-            logger.info(f"Parsed {len(entries)} entries from {len(instructions)} instructions")
+            logger.info(f"Page 0: {len(entries)} entries from {len(instructions)} instructions")
 
         for entry in entries:
             entry_id = entry.get('entryId', '')
@@ -345,76 +319,6 @@ def fetch_ig_following(handle):
 
 
 # ── Routes ──
-
-@app.route('/api/debug/following-raw', methods=['GET'])
-def debug_following_raw():
-    """Temp debug endpoint - returns raw X API response structure."""
-    handle = request.args.get('handle', 'jack').strip().lstrip('@')
-    try:
-        user_id, name, friends_count = fetch_x_user_id(handle)
-
-        cookie_str = "; ".join(f"{k}={v}" for k, v in get_x_cookies().items() if v)
-        headers = get_x_headers()
-        headers['cookie'] = cookie_str
-
-        variables = {
-            "userId": user_id,
-            "count": 20,
-            "includePromotedContent": False,
-        }
-        features = {
-            "rweb_video_screen_enabled": False,
-            "profile_label_improvements_pcf_label_in_post_enabled": True,
-            "responsive_web_graphql_timeline_navigation_enabled": True,
-            "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
-            "creator_subscriptions_tweet_preview_api_enabled": True,
-            "communities_web_enable_tweet_community_results_fetch": True,
-            "c9s_tweet_anatomy_moderator_badge_enabled": True,
-            "responsive_web_edit_tweet_api_enabled": True,
-            "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
-            "view_counts_everywhere_api_enabled": True,
-            "longform_notetweets_consumption_enabled": True,
-            "responsive_web_twitter_article_tweet_consumption_enabled": True,
-            "freedom_of_speech_not_reach_fetch_enabled": True,
-            "standardized_nudges_misinfo": True,
-            "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
-            "longform_notetweets_rich_text_read_enabled": True,
-            "responsive_web_enhance_cards_enabled": False,
-        }
-
-        resp = cffi_requests.get(
-            GRAPHQL_FOLLOWING,
-            params={
-                'variables': json.dumps(variables),
-                'features': json.dumps(features),
-            },
-            headers=headers,
-            impersonate="chrome",
-            timeout=30,
-        )
-
-        data = resp.json()
-
-        # Build a summary of the structure
-        def summarize(obj, depth=0, max_depth=4):
-            if depth >= max_depth:
-                return f"<{type(obj).__name__}>"
-            if isinstance(obj, dict):
-                return {k: summarize(v, depth+1, max_depth) for k, v in list(obj.items())[:20]}
-            if isinstance(obj, list):
-                if len(obj) == 0:
-                    return []
-                return [summarize(obj[0], depth+1, max_depth), f"...({len(obj)} items)"]
-            return obj
-
-        return jsonify({
-            'status': resp.status_code,
-            'user': {'id': user_id, 'name': name, 'following': friends_count},
-            'structure': summarize(data),
-            'raw_first_5000': json.dumps(data)[:5000],
-        })
-    except Exception as e:
-        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 
 
 @app.route('/api/following', methods=['GET'])

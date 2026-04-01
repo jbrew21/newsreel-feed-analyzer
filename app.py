@@ -32,7 +32,7 @@ async def get_x_client():
         return _x_client
 
     from twikit import Client
-    client = Client('en-US')
+    client = Client('en-US', timeout=60)
 
     # Try loading saved cookies first
     cookie_path = '/tmp/x_cookies.json'

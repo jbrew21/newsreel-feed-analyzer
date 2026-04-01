@@ -201,8 +201,9 @@ def fetch_x_following(handle):
         next_cursor = None
 
         for instruction in instructions:
-            if instruction.get('type') == 'TimelineAddEntries' or 'entries' in instruction:
-                entries = instruction.get('entries', [])
+            inst_entries = instruction.get('entries', [])
+            if inst_entries:
+                entries.extend(inst_entries)
             elif instruction.get('type') == 'TimelineAddToModule':
                 entries.extend(instruction.get('moduleItems', []))
 

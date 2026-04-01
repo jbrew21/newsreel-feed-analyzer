@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: newsreel-feed-analyzer
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120
+    envVars:
+      - key: X_USERNAME
+        sync: false
+      - key: X_EMAIL
+        sync: false
+      - key: X_PASSWORD
+        sync: false
+      - key: IG_USERNAME
+        sync: false
+      - key: IG_PASSWORD
+        sync: false
+    plan: free

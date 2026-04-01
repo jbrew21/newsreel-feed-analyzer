@@ -271,8 +271,19 @@ def get_ig_client():
     from instagrapi import Client
     client = Client()
 
-    # Try loading saved session
     session_path = '/tmp/ig_session.json'
+
+    # Option 1: Restore from IG_SESSION env var (pre-authed from trusted IP)
+    ig_session = os.environ.get('IG_SESSION')
+    if ig_session and not os.path.exists(session_path):
+        try:
+            with open(session_path, 'w') as f:
+                f.write(ig_session)
+            logger.info("Wrote IG_SESSION env var to session file")
+        except Exception as e:
+            logger.error(f"Failed to write IG session: {e}")
+
+    # Option 2: Load saved session file
     if os.path.exists(session_path):
         try:
             client.load_settings(session_path)
@@ -281,10 +292,12 @@ def get_ig_client():
                 os.environ.get('IG_PASSWORD', '')
             )
             _ig_client = client
+            logger.info("Instagram session restored successfully")
             return client
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Session restore failed: {e}, trying fresh login")
 
+    # Option 3: Fresh login (may fail from datacenter IPs)
     username = os.environ.get('IG_USERNAME')
     password = os.environ.get('IG_PASSWORD')
 

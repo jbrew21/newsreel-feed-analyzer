@@ -47,7 +47,14 @@ def get_x_headers():
 def get_x_cookies():
     auth_token = os.environ.get('X_AUTH_TOKEN', '')
     ct0 = os.environ.get('X_CT0', '')
-    return {'auth_token': auth_token, 'ct0': ct0}
+    kdt = os.environ.get('X_KDT', '')
+    twid = os.environ.get('X_TWID', '')
+    cookies = {'auth_token': auth_token, 'ct0': ct0}
+    if kdt:
+        cookies['kdt'] = kdt
+    if twid:
+        cookies['twid'] = twid
+    return cookies
 
 
 async def fetch_x_user_id(handle):
@@ -86,6 +93,7 @@ async def fetch_x_user_id(handle):
         )
         logger.info(f"UserByScreenName status: {resp.status_code}")
 
+        logger.info(f"Request URL: {resp.url}")
         if resp.status_code != 200:
             logger.error(f"UserByScreenName error (status {resp.status_code}): {resp.text[:1000]}")
             logger.error(f"Response headers: {dict(resp.headers)}")

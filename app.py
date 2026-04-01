@@ -181,9 +181,6 @@ def fetch_x_following(handle):
 
         logger.info(f"Following page {page}: status {resp.status_code}")
 
-        if page == 0:
-            logger.info(f"Following page 0 response (first 2000 chars): {resp.text[:2000]}")
-
         if resp.status_code != 200:
             logger.error(f"Following error: {resp.text[:500]}")
             break
@@ -204,7 +201,7 @@ def fetch_x_following(handle):
         next_cursor = None
 
         for instruction in instructions:
-            if instruction.get('type') == 'TimelineAddEntries':
+            if instruction.get('type') == 'TimelineAddEntries' or 'entries' in instruction:
                 entries = instruction.get('entries', [])
             elif instruction.get('type') == 'TimelineAddToModule':
                 entries.extend(instruction.get('moduleItems', []))

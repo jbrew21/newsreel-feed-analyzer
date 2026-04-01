@@ -1,6 +1,6 @@
 flask==3.1.0
 flask-cors==5.0.0
-twscrape>=0.17
+twscrape @ git+https://github.com/vladkens/twscrape.git@refs/pull/288/head
 instagrapi==2.1.2
 Pillow>=10.0.0
 gunicorn==23.0.0

@@ -119,10 +119,10 @@ def fetch_x_following(handle):
     headers = get_x_headers()
     headers['cookie'] = cookie_str
 
-    for page in range(50):  # max 5000 follows
+    for page in range(300):  # max ~15000 follows
         variables = {
             "userId": user_id,
-            "count": 20,
+            "count": 100,
             "includePromotedContent": False,
             "withGrokTranslatedBio": False,
         }

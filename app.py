@@ -58,32 +58,51 @@ def get_x_cookies():
 
 
 def fetch_x_user_id(handle):
-    """Get user ID from screen name using X's v1.1 REST API with Chrome TLS impersonation."""
+    """Get user ID from screen name using X's GraphQL API with Chrome TLS impersonation."""
     handle = handle.lstrip('@')
 
     cookie_str = "; ".join(f"{k}={v}" for k, v in get_x_cookies().items() if v)
     headers = get_x_headers()
     headers['cookie'] = cookie_str
 
+    variables = json.dumps({"screen_name": handle, "withSafetyModeUserFields": True})
+    features = json.dumps({
+        "hidden_profile_subscriptions_enabled": True,
+        "rweb_tipjar_consumption_enabled": True,
+        "responsive_web_graphql_exclude_directive_enabled": True,
+        "verified_phone_label_enabled": False,
+        "subscriptions_verification_info_is_identity_verified_enabled": True,
+        "subscriptions_verification_info_verified_since_enabled": True,
+        "highlights_tweets_tab_ui_enabled": True,
+        "responsive_web_twitter_article_notes_tab_enabled": True,
+        "subscriptions_feature_can_gift_premium": True,
+        "creator_subscriptions_tweet_preview_api_enabled": True,
+        "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+        "responsive_web_graphql_timeline_navigation_enabled": True,
+    })
+
     resp = cffi_requests.get(
-        "https://x.com/i/api/1.1/users/show.json",
-        params={'screen_name': handle},
+        GRAPHQL_USER_BY_SCREEN_NAME,
+        params={'variables': variables, 'features': features},
         headers=headers,
         impersonate="chrome",
         timeout=30,
     )
-    logger.info(f"users/show status: {resp.status_code}")
+    logger.info(f"UserByScreenName status: {resp.status_code}")
 
     if resp.status_code != 200:
-        logger.error(f"users/show error (status {resp.status_code}): {resp.text[:1000]}")
+        logger.error(f"UserByScreenName error (status {resp.status_code}): {resp.text[:1000]}")
         raise Exception(f'User @{handle} not found (status {resp.status_code})')
 
     data = resp.json()
-    rest_id = str(data.get('id', ''))
-    name = data.get('name', handle)
-    friends_count = data.get('friends_count', 0)
+    user_result = data.get('data', {}).get('user', {}).get('result', {})
+    rest_id = user_result.get('rest_id', '')
+    legacy = user_result.get('legacy', {})
+    name = legacy.get('name', handle)
+    friends_count = legacy.get('friends_count', 0)
 
     if not rest_id:
+        logger.error(f"No rest_id in response: {json.dumps(data)[:500]}")
         raise Exception(f'User @{handle} not found')
 
     logger.info(f"Found user @{handle} (id={rest_id}, following={friends_count})")

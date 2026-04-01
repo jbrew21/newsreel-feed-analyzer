@@ -2,9 +2,8 @@
 Newsreel Feed Analyzer Backend
 Fetches following lists from X/Twitter and Instagram.
 Deploy on Render with env vars:
-  X_USERNAME, X_EMAIL, X_PASSWORD
+  X_AUTH_TOKEN, X_CT0 (from browser cookies)
   IG_USERNAME, IG_PASSWORD
-  (Optional) X_AUTH_TOKEN, X_CT0 for cookie-based X auth
 """
 
 import os
@@ -12,6 +11,7 @@ import json
 import asyncio
 import logging
 import traceback
+import httpx
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
@@ -21,77 +21,189 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app, origins=["https://newsreel.co", "http://localhost:*"])
 
-# ── X/Twitter via twscrape ──
+# ── X/Twitter via direct GraphQL API ──
 
-_x_api = None
-_x_initialized = False
-DB_PATH = '/tmp/twscrape_accounts.db'
+BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
+
+GRAPHQL_FOLLOWING = "https://x.com/i/api/graphql/iSicc7LrzWGBgDPL0tM_TQ/Following"
+GRAPHQL_USER_BY_SCREEN_NAME = "https://x.com/i/api/graphql/xmU6X_CKcnQ5lSrCbAmJsg/UserByScreenName"
 
 
-async def get_x_api():
-    global _x_api, _x_initialized
-    if _x_api is not None and _x_initialized:
-        return _x_api
+def get_x_headers():
+    ct0 = os.environ.get('X_CT0', '')
+    return {
+        'authorization': f'Bearer {BEARER_TOKEN}',
+        'x-csrf-token': ct0,
+        'x-twitter-auth-type': 'OAuth2Session',
+        'x-twitter-active-user': 'yes',
+        'content-type': 'application/json',
+    }
 
-    from twscrape import API
 
-    # Always start fresh to avoid stale account state
-    if os.path.exists(DB_PATH):
-        os.remove(DB_PATH)
+def get_x_cookies():
+    auth_token = os.environ.get('X_AUTH_TOKEN', '')
+    ct0 = os.environ.get('X_CT0', '')
+    return {'auth_token': auth_token, 'ct0': ct0}
 
-    api = API(DB_PATH)
 
-    if not _x_initialized:
-        username = os.environ.get('X_USERNAME', '')
-        password = os.environ.get('X_PASSWORD', '')
-        email = os.environ.get('X_EMAIL', '')
+async def fetch_x_user_id(handle):
+    """Get user ID from screen name using X's GraphQL API."""
+    handle = handle.lstrip('@')
+    variables = json.dumps({
+        "screen_name": handle,
+        "withSafetyModeUserFields": True
+    })
+    features = json.dumps({
+        "hidden_profile_subscriptions_enabled": True,
+        "rweb_tipjar_consumption_enabled": True,
+        "responsive_web_graphql_exclude_directive_enabled": True,
+        "verified_phone_label_enabled": False,
+        "subscriptions_verification_info_is_identity_verified_enabled": True,
+        "subscriptions_verification_info_verified_since_enabled": True,
+        "highlights_tweets_tab_ui_enabled": True,
+        "responsive_web_twitter_article_notes_tab_enabled": True,
+        "subscriptions_feature_can_gift_premium": True,
+        "creator_subscriptions_tweet_preview_api_enabled": True,
+        "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+        "responsive_web_graphql_timeline_navigation_enabled": True,
+    })
 
-        # Cookie-based auth (most reliable)
-        auth_token = os.environ.get('X_AUTH_TOKEN', '')
-        ct0 = os.environ.get('X_CT0', '')
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            GRAPHQL_USER_BY_SCREEN_NAME,
+            params={'variables': variables, 'features': features},
+            headers=get_x_headers(),
+            cookies=get_x_cookies(),
+        )
+        logger.info(f"UserByScreenName status: {resp.status_code}")
 
-        if auth_token and ct0:
-            cookies = f"auth_token={auth_token}; ct0={ct0}"
-            logger.info("Using cookie-based X auth")
-            await api.pool.add_account(username, password, email, "", cookies=cookies)
-            await api.pool.set_active(username, True)
-            logger.info(f"Account {username} added and set active")
-        elif username and password and email:
-            logger.info("Using login-based X auth")
-            await api.pool.add_account(username, password, email, "")
-            await api.pool.login_all()
-        else:
-            raise Exception('X credentials not configured')
+        if resp.status_code != 200:
+            logger.error(f"UserByScreenName error: {resp.text[:500]}")
+            raise Exception(f'User @{handle} not found (status {resp.status_code})')
 
-        _x_initialized = True
+        data = resp.json()
+        user_data = data.get('data', {}).get('user', {}).get('result', {})
+        rest_id = user_data.get('rest_id')
+        if not rest_id:
+            raise Exception(f'User @{handle} not found')
 
-    _x_api = api
-    return api
+        name = user_data.get('legacy', {}).get('name', handle)
+        friends_count = user_data.get('legacy', {}).get('friends_count', 0)
+        logger.info(f"Found user @{handle} (id={rest_id}, following={friends_count})")
+        return rest_id, name, friends_count
 
 
 async def fetch_x_following(handle):
-    from twscrape import gather
-
-    api = await get_x_api()
-    handle = handle.lstrip('@')
-
-    # Resolve screen name to user ID
-    user = await api.user_by_login(handle)
-    if not user:
-        raise Exception(f'User @{handle} not found')
-
-    logger.info(f"Fetching following for @{handle} (id={user.id}, following={user.friendsCount})")
-
-    # Fetch following list
-    results = await gather(api.following(user.id, limit=5000))
+    """Fetch following list using X's GraphQL API directly."""
+    user_id, name, friends_count = await fetch_x_user_id(handle)
 
     following = []
-    for u in results:
-        following.append({
-            'handle': u.username,
-            'name': u.displayname or u.username,
-        })
+    cursor = None
 
+    async with httpx.AsyncClient(timeout=30) as client:
+        for page in range(50):  # max 5000 follows
+            variables = {
+                "userId": user_id,
+                "count": 100,
+                "includePromotedContent": False,
+            }
+            if cursor:
+                variables["cursor"] = cursor
+
+            features = {
+                "rweb_tipjar_consumption_enabled": True,
+                "responsive_web_graphql_exclude_directive_enabled": True,
+                "verified_phone_label_enabled": False,
+                "creator_subscriptions_tweet_preview_api_enabled": True,
+                "responsive_web_graphql_timeline_navigation_enabled": True,
+                "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+                "communities_web_enable_tweet_community_results_fetch": True,
+                "c9s_tweet_anatomy_moderator_badge_enabled": True,
+                "articles_preview_enabled": True,
+                "responsive_web_edit_tweet_api_enabled": True,
+                "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+                "view_counts_everywhere_api_enabled": True,
+                "longform_notetweets_consumption_enabled": True,
+                "responsive_web_twitter_article_tweet_consumption_enabled": True,
+                "tweet_awards_web_tipping_enabled": False,
+                "creator_subscriptions_quote_tweet_preview_enabled": False,
+                "freedom_of_speech_not_reach_fetch_enabled": True,
+                "standardized_nudges_misinfo": True,
+                "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+                "rweb_video_timestamps_enabled": True,
+                "longform_notetweets_rich_text_read_enabled": True,
+                "longform_notetweets_inline_media_enabled": True,
+                "responsive_web_enhance_cards_enabled": False,
+            }
+
+            resp = await client.get(
+                GRAPHQL_FOLLOWING,
+                params={
+                    'variables': json.dumps(variables),
+                    'features': json.dumps(features),
+                },
+                headers=get_x_headers(),
+                cookies=get_x_cookies(),
+            )
+
+            logger.info(f"Following page {page}: status {resp.status_code}")
+
+            if resp.status_code != 200:
+                logger.error(f"Following error: {resp.text[:500]}")
+                break
+
+            data = resp.json()
+
+            # Parse the timeline entries
+            instructions = (
+                data.get('data', {})
+                .get('user', {})
+                .get('result', {})
+                .get('timeline', {})
+                .get('timeline', {})
+                .get('instructions', [])
+            )
+
+            entries = []
+            next_cursor = None
+
+            for instruction in instructions:
+                if instruction.get('type') == 'TimelineAddEntries':
+                    entries = instruction.get('entries', [])
+                elif instruction.get('type') == 'TimelineAddToModule':
+                    entries.extend(instruction.get('moduleItems', []))
+
+            for entry in entries:
+                entry_id = entry.get('entryId', '')
+
+                # Cursor entries
+                if entry_id.startswith('cursor-bottom'):
+                    next_cursor = entry.get('content', {}).get('value')
+                    continue
+
+                # User entries
+                content = entry.get('content', {})
+                item_content = content.get('itemContent', {})
+                user_results = item_content.get('user_results', {}).get('result', {})
+
+                if not user_results:
+                    continue
+
+                legacy = user_results.get('legacy', {})
+                screen_name = legacy.get('screen_name', '')
+                display_name = legacy.get('name', screen_name)
+
+                if screen_name:
+                    following.append({
+                        'handle': screen_name,
+                        'name': display_name,
+                    })
+
+            if not next_cursor or len(entries) <= 2:  # only cursor entries left
+                break
+            cursor = next_cursor
+
+    logger.info(f"Fetched {len(following)} following for @{handle}")
     return following
 
 
@@ -186,7 +298,7 @@ def get_following():
         logger.error(traceback.format_exc())
         if 'not configured' in error_msg:
             return jsonify({'error': 'Platform not yet available. Coming soon.'}), 503
-        if 'not found' in error_msg.lower() or 'user' in error_msg.lower():
+        if 'not found' in error_msg.lower():
             return jsonify({'error': 'Handle not found. Check spelling and try again.'}), 404
         return jsonify({'error': f'Something went wrong: {error_msg}'}), 500
 
@@ -195,7 +307,7 @@ def get_following():
 def health():
     return jsonify({
         'status': 'ok',
-        'x_configured': bool(os.environ.get('X_USERNAME')),
+        'x_configured': bool(os.environ.get('X_AUTH_TOKEN')),
         'ig_configured': bool(os.environ.get('IG_USERNAME')),
     })
 

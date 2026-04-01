@@ -187,6 +187,32 @@ def fetch_x_following(handle):
 
         data = resp.json()
 
+        if page == 0:
+            # Dump top-level keys and drill down to find entries
+            logger.info(f"Response top keys: {list(data.keys())}")
+            d = data.get('data', {})
+            logger.info(f"data keys: {list(d.keys())}")
+            u = d.get('user', {})
+            logger.info(f"data.user keys: {list(u.keys())}")
+            r = u.get('result', {})
+            logger.info(f"data.user.result keys: {list(r.keys())}")
+            t = r.get('timeline', {})
+            logger.info(f"data.user.result.timeline keys: {list(t.keys())}")
+            t2 = t.get('timeline', {})
+            logger.info(f"data.user.result.timeline.timeline keys: {list(t2.keys())}")
+            raw_instructions = t2.get('instructions', [])
+            logger.info(f"instructions count: {len(raw_instructions)}")
+            for idx, inst in enumerate(raw_instructions):
+                logger.info(f"instruction[{idx}] type={inst.get('type','NO_TYPE')} keys={list(inst.keys())} entries_count={len(inst.get('entries', []))}")
+
+            # Also try alternate path: data.user.result.timeline_v2
+            if 'timeline_v2' in r:
+                logger.info(f"FOUND timeline_v2! keys: {list(r['timeline_v2'].keys())}")
+
+            # Raw dump first 2000 chars if no instructions
+            if not raw_instructions:
+                logger.info(f"RAW RESPONSE (first 2000): {json.dumps(data)[:2000]}")
+
         # Parse the timeline entries
         instructions = (
             data.get('data', {})
@@ -196,6 +222,17 @@ def fetch_x_following(handle):
             .get('timeline', {})
             .get('instructions', [])
         )
+
+        # Also check timeline_v2 path
+        if not instructions:
+            instructions = (
+                data.get('data', {})
+                .get('user', {})
+                .get('result', {})
+                .get('timeline_v2', {})
+                .get('timeline', {})
+                .get('instructions', [])
+            )
 
         entries = []
         next_cursor = None
@@ -208,9 +245,7 @@ def fetch_x_following(handle):
                 entries.extend(instruction.get('moduleItems', []))
 
         if page == 0:
-            logger.info(f"Found {len(entries)} entries, instructions types: {[i.get('type','NO_TYPE') for i in instructions]}")
-            if entries:
-                logger.info(f"First entry keys: {list(entries[0].keys())}")
+            logger.info(f"Parsed {len(entries)} entries from {len(instructions)} instructions")
 
         for entry in entries:
             entry_id = entry.get('entryId', '')

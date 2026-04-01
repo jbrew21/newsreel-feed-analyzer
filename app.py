@@ -9,8 +9,13 @@ Deploy on Render with env vars:
 import os
 import json
 import asyncio
+import logging
+import traceback
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app, origins=["https://newsreel.co", "http://localhost:*"])
@@ -172,11 +177,13 @@ def get_following():
 
     except Exception as e:
         error_msg = str(e)
+        logger.error(f"Error fetching {platform} following for {handle}: {error_msg}")
+        logger.error(traceback.format_exc())
         if 'not configured' in error_msg:
             return jsonify({'error': 'Platform not yet available. Coming soon.'}), 503
         if 'not found' in error_msg.lower() or 'user' in error_msg.lower():
             return jsonify({'error': 'Handle not found. Check spelling and try again.'}), 404
-        return jsonify({'error': 'Something went wrong. Try again in a moment.'}), 500
+        return jsonify({'error': f'Something went wrong: {error_msg}'}), 500
 
 
 @app.route('/health', methods=['GET'])

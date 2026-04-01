@@ -4,6 +4,7 @@ Fetches following lists from X/Twitter and Instagram.
 Deploy on Render with env vars:
   X_USERNAME, X_EMAIL, X_PASSWORD
   IG_USERNAME, IG_PASSWORD
+  (Optional) X_AUTH_TOKEN, X_CT0 for cookie-based X auth
 """
 
 import os
@@ -20,72 +21,69 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app, origins=["https://newsreel.co", "http://localhost:*"])
 
-# ── X/Twitter via twikit ──
+# ── X/Twitter via twscrape ──
 
-_x_client = None
-_x_lock = asyncio.Lock()
+_x_api = None
+_x_initialized = False
+DB_PATH = '/tmp/twscrape_accounts.db'
 
 
-async def get_x_client():
-    global _x_client
-    if _x_client is not None:
-        return _x_client
+async def get_x_api():
+    global _x_api, _x_initialized
+    if _x_api is not None and _x_initialized:
+        return _x_api
 
-    from twikit import Client
-    client = Client('en-US', timeout=60)
+    from twscrape import API
+    api = API(DB_PATH)
 
-    # Try loading saved cookies first
-    cookie_path = '/tmp/x_cookies.json'
-    if os.path.exists(cookie_path):
-        try:
-            client.load_cookies(cookie_path)
-            _x_client = client
-            return client
-        except Exception:
-            pass
+    if not _x_initialized:
+        username = os.environ.get('X_USERNAME', '')
+        password = os.environ.get('X_PASSWORD', '')
+        email = os.environ.get('X_EMAIL', '')
 
-    # Login with credentials
-    username = os.environ.get('X_USERNAME')
-    email = os.environ.get('X_EMAIL')
-    password = os.environ.get('X_PASSWORD')
+        # Cookie-based auth (most reliable)
+        auth_token = os.environ.get('X_AUTH_TOKEN', '')
+        ct0 = os.environ.get('X_CT0', '')
 
-    if not all([username, email, password]):
-        raise Exception('X credentials not configured')
+        if auth_token and ct0:
+            cookies = f"auth_token={auth_token}; ct0={ct0}"
+            logger.info("Using cookie-based X auth")
+            await api.pool.add_account(username, password, email, "", cookies=cookies)
+        elif username and password and email:
+            logger.info("Using login-based X auth")
+            await api.pool.add_account(username, password, email, "")
+            await api.pool.login_all()
+        else:
+            raise Exception('X credentials not configured')
 
-    await client.login(
-        auth_info_1=username,
-        auth_info_2=email,
-        password=password
-    )
-    client.save_cookies(cookie_path)
-    _x_client = client
-    return client
+        _x_initialized = True
+
+    _x_api = api
+    return api
 
 
 async def fetch_x_following(handle):
-    client = await get_x_client()
+    from twscrape import gather
 
-    # Get user
+    api = await get_x_api()
     handle = handle.lstrip('@')
-    user = await client.get_user_by_screen_name(handle)
 
-    # Fetch following (paginated)
+    # Resolve screen name to user ID
+    user = await api.user_by_login(handle)
+    if not user:
+        raise Exception(f'User @{handle} not found')
+
+    logger.info(f"Fetching following for @{handle} (id={user.id}, following={user.friendsCount})")
+
+    # Fetch following list
+    results = await gather(api.following(user.id, limit=5000))
+
     following = []
-    result = await user.get_following()
-
-    for _ in range(50):  # max 5000
-        for u in result:
-            following.append({
-                'handle': u.screen_name,
-                'name': u.name or u.screen_name,
-            })
-        # Check for next page
-        try:
-            result = await result.next()
-            if not result:
-                break
-        except Exception:
-            break
+    for u in results:
+        following.append({
+            'handle': u.username,
+            'name': u.displayname or u.username,
+        })
 
     return following
 

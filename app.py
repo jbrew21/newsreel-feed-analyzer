@@ -272,6 +272,7 @@ def get_ig_client():
     client = Client()
 
     session_path = '/tmp/ig_session.json'
+    secret_file_path = '/etc/secrets/ig_session.json'
 
     # Option 1: Restore from IG_SESSION env var (pre-authed from trusted IP)
     ig_session = os.environ.get('IG_SESSION')
@@ -282,6 +283,15 @@ def get_ig_client():
             logger.info("Wrote IG_SESSION env var to session file")
         except Exception as e:
             logger.error(f"Failed to write IG session: {e}")
+
+    # Option 1b: Restore from Render secret file
+    if not os.path.exists(session_path) and os.path.exists(secret_file_path):
+        try:
+            import shutil
+            shutil.copy(secret_file_path, session_path)
+            logger.info("Copied secret file to session path")
+        except Exception as e:
+            logger.error(f"Failed to copy secret file: {e}")
 
     # Option 2: Load saved session file
     if os.path.exists(session_path):

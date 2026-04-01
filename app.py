@@ -264,8 +264,11 @@ def fetch_x_following(handle):
                 continue
 
             legacy = user_results.get('legacy', {})
-            screen_name = legacy.get('screen_name', '')
-            display_name = legacy.get('name', screen_name)
+            core = user_results.get('core', {})
+
+            # screen_name can be in legacy or core
+            screen_name = legacy.get('screen_name', '') or core.get('screen_name', '')
+            display_name = legacy.get('name', '') or core.get('name', '') or screen_name
 
             if screen_name:
                 following.append({
@@ -408,7 +411,7 @@ def debug_following_raw():
             'status': resp.status_code,
             'user': {'id': user_id, 'name': name, 'following': friends_count},
             'structure': summarize(data),
-            'raw_first_2000': json.dumps(data)[:2000],
+            'raw_first_5000': json.dumps(data)[:5000],
         })
     except Exception as e:
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500

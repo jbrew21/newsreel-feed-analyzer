@@ -206,6 +206,11 @@ def fetch_x_following(handle):
             elif instruction.get('type') == 'TimelineAddToModule':
                 entries.extend(instruction.get('moduleItems', []))
 
+        if page == 0:
+            logger.info(f"Found {len(entries)} entries, instructions types: {[i.get('type','NO_TYPE') for i in instructions]}")
+            if entries:
+                logger.info(f"First entry keys: {list(entries[0].keys())}")
+
         for entry in entries:
             entry_id = entry.get('entryId', '')
 

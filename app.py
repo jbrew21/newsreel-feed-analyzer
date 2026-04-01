@@ -36,7 +36,11 @@ def get_x_headers():
         'x-csrf-token': ct0,
         'x-twitter-auth-type': 'OAuth2Session',
         'x-twitter-active-user': 'yes',
+        'x-twitter-client-language': 'en',
         'content-type': 'application/json',
+        'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'referer': 'https://x.com/',
+        'origin': 'https://x.com',
     }
 
 
@@ -83,7 +87,8 @@ async def fetch_x_user_id(handle):
         logger.info(f"UserByScreenName status: {resp.status_code}")
 
         if resp.status_code != 200:
-            logger.error(f"UserByScreenName error: {resp.text[:500]}")
+            logger.error(f"UserByScreenName error (status {resp.status_code}): {resp.text[:1000]}")
+            logger.error(f"Response headers: {dict(resp.headers)}")
             raise Exception(f'User @{handle} not found (status {resp.status_code})')
 
         data = resp.json()

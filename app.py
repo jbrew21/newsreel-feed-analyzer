@@ -34,6 +34,11 @@ async def get_x_api():
         return _x_api
 
     from twscrape import API
+
+    # Always start fresh to avoid stale account state
+    if os.path.exists(DB_PATH):
+        os.remove(DB_PATH)
+
     api = API(DB_PATH)
 
     if not _x_initialized:
@@ -49,6 +54,8 @@ async def get_x_api():
             cookies = f"auth_token={auth_token}; ct0={ct0}"
             logger.info("Using cookie-based X auth")
             await api.pool.add_account(username, password, email, "", cookies=cookies)
+            await api.pool.set_active(username, True)
+            logger.info(f"Account {username} added and set active")
         elif username and password and email:
             logger.info("Using login-based X auth")
             await api.pool.add_account(username, password, email, "")
